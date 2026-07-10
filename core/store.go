@@ -5,34 +5,33 @@ import (
 	"time"
 )
 
-var store = make(map[string]*Object) // #genai: maps must be initialized before writes
+var store map[string]*Obj // #genai: maps must be initialized before writes
 
-type Object struct {
-	Value     interface{}
-	ExpiresAt int64
+func init() {
+	store = make(map[string]*Obj)
 }
 
-func NewObject(value interface{}, expTimeMs int64) *Object {
+func NewObject(value interface{}, expTimeMs int64, oType uint8, oEncoding uint8) *Obj {
 	var expiresAt int64 = -1
-	if expTimeMs != -1 {
+	if expTimeMs > 0 {
 		expiresAt = time.Now().UnixMilli() + expTimeMs
 	}
-	return &Object{Value: value, ExpiresAt: expiresAt}
+	return &Obj{Value: value, ExpireAt: expiresAt, TypeEncoding: oType | oEncoding}
 }
 
-func Put(key string, obj *Object) {
+func Put(key string, obj *Obj) {
 	if len(store) >= config.Config.MaxKeys {
 		evict()
 	}
 	store[key] = obj
 }
 
-func Get(key string) *Object {
+func Get(key string) *Obj {
 	obj, ok := store[key]
 	if !ok {
 		return nil
 	}
-	if obj.ExpiresAt != -1 && obj.ExpiresAt < time.Now().UnixMilli() {
+	if obj.ExpireAt > 0 && obj.ExpireAt < time.Now().UnixMilli() {
 		delete(store, key)
 		return nil
 	}

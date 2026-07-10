@@ -23,7 +23,7 @@ func DumpAllAOF() {
 	log.Println("AOF dumped to complete ", config.Config.AOF_FILE)
 }
 
-func dumpKey(fp *os.File, k string, obj *Object) {
+func dumpKey(fp *os.File, k string, obj *Obj) {
 	cmd := fmt.Sprintf("SET %s %s", k, obj.Value)
 	tokens := strings.Split(cmd, " ")
 	fp.Write(Encode(tokens, false))

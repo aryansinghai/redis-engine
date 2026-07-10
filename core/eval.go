@@ -34,6 +34,8 @@ func EvalAndRespond(cmds RedisCmds, c io.ReadWriter) error {
 			buf.Write(evalExpire(cmd.Args, c))
 		case "BGREWRITEAOF":
 			buf.Write(evalBgRewriteAOF(cmd.Args))
+		case "INCR":
+			buf.Write(evalIncr(cmd.Args, c))
 		default:
 			buf.Write(evalPing(cmd.Args, c))
 		}
@@ -74,6 +76,7 @@ func evalSet(args []string, c io.ReadWriter) []byte {
 	var expTimeMs int64 = -1
 
 	key, value = args[0], args[1]
+	oType, oEncoding := deduceTypeAndEncoding(value)
 
 	for i := 2; i < len(args); i++ {
 		switch args[i] {
@@ -92,7 +95,7 @@ func evalSet(args []string, c io.ReadWriter) []byte {
 		}
 	}
 
-	Put(key, NewObject(value, expTimeMs))
+	Put(key, NewObject(value, expTimeMs, oType, oEncoding))
 	return RESP_OK
 }
 
@@ -121,11 +124,11 @@ func evalTTL(args []string, c io.ReadWriter) []byte {
 		return RESP_NIL2
 	}
 
-	if obj.ExpiresAt == -1 {
+	if obj.ExpireAt == -1 {
 		return RESP_NIL_INTEGER
 	}
 
-	ttl := obj.ExpiresAt - time.Now().UnixMilli()
+	ttl := obj.ExpireAt - time.Now().UnixMilli()
 	if ttl <= 0 {
 		return RESP_NIL2
 	}
@@ -157,6 +160,44 @@ func evalExpire(args []string, c io.ReadWriter) []byte {
 		return Encode(0, false)
 	}
 	expDurationMs := time.Now().UnixMilli() + expDurationSecs*1000
-	obj.ExpiresAt = expDurationMs
+	obj.ExpireAt = expDurationMs
 	return Encode(1, false)
+}
+
+func evalIncr(args []string, c io.ReadWriter) []byte {
+	if len(args) != 1 {
+		return Encode(errors.New("wrong number of arguments for 'incr' command"), false)
+	}
+	key := args[0]
+	obj := Get(key)
+	if obj == nil {
+		obj = NewObject("0", -1, OBJ_TYPE_STRING, OBJ_ENCODING_INT)
+		Put(key, obj)
+	}
+	if err := assertType(obj.TypeEncoding, OBJ_TYPE_STRING); err != nil {
+		return Encode(errors.New("type mismatch"), false)
+	}
+
+	if err := assertEncoding(obj.TypeEncoding, OBJ_ENCODING_INT); err != nil {
+		return Encode(errors.New("encoding mismatch"), false)
+	}
+
+	value, err := strconv.ParseInt(obj.Value.(string), 10, 64)
+	if err != nil {
+		return Encode(errors.New("invalid value for 'incr' command"), false)
+	}
+	value++
+	obj.Value = strconv.FormatInt(value, 10)
+	return Encode(value, false)
+}
+
+func deduceTypeAndEncoding(value string) (uint8, uint8) {
+	oType := OBJ_TYPE_STRING
+	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return oType, OBJ_ENCODING_INT
+	}
+	if len(value) <= 44 {
+		return oType, OBJ_ENCODING_EMBSTR
+	}
+	return oType, OBJ_ENCODING_RAW
 }

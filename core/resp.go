@@ -161,6 +161,8 @@ func Encode(value interface{}, simple bool) []byte {
 			buf.Write(encodeString(s))
 		}
 		return []byte(fmt.Sprintf("*%d\r\n%s", len(v), buf.Bytes()))
+	case error:
+		return []byte(fmt.Sprintf("-%s\r\n", v.Error()))
 	}
 	return []byte{}
 }

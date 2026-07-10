@@ -21,9 +21,9 @@ func expireSample() float32 {
 	var count int = 0
 
 	for key, obj := range store {
-		if obj.ExpiresAt != -1 {
+		if obj.ExpireAt != -1 {
 			limit--
-			if obj.ExpiresAt < time.Now().UnixMilli() {
+			if obj.ExpireAt < time.Now().UnixMilli() {
 				delete(store, key)
 				count++
 			}
