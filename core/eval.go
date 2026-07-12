@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"time"
@@ -36,6 +37,8 @@ func EvalAndRespond(cmds RedisCmds, c io.ReadWriter) error {
 			buf.Write(evalBgRewriteAOF(cmd.Args))
 		case "INCR":
 			buf.Write(evalIncr(cmd.Args, c))
+		case "INFO":
+			buf.Write(evalInfo(cmd.Args))
 		default:
 			buf.Write(evalPing(cmd.Args, c))
 		}
@@ -200,4 +203,16 @@ func deduceTypeAndEncoding(value string) (uint8, uint8) {
 		return oType, OBJ_ENCODING_EMBSTR
 	}
 	return oType, OBJ_ENCODING_RAW
+}
+
+func evalInfo(args []string) []byte {
+	var info []byte
+	buf := bytes.NewBuffer(info)
+
+	buf.WriteString("# KeySpace\r\n")
+	for i := range KeySpaceStat {
+		buf.WriteString(fmt.Sprintf("db%d:keys=%d,expires=0,avg_ttl=0\r\n", i, KeySpaceStat[i]["keys"]))
+	}
+
+	return Encode(buf.String(), false) // #genai: bulk string; Encode expects string not []byte
 }
