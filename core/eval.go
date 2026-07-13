@@ -127,11 +127,11 @@ func evalTTL(args []string, c io.ReadWriter) []byte {
 		return RESP_NIL2
 	}
 
-	if obj.ExpireAt == -1 {
+	if isExpired(obj) {
 		return RESP_NIL_INTEGER
 	}
 
-	ttl := obj.ExpireAt - time.Now().UnixMilli()
+	ttl := expiresAt[obj] - uint64(time.Now().UnixMilli())
 	if ttl <= 0 {
 		return RESP_NIL2
 	}
@@ -163,7 +163,7 @@ func evalExpire(args []string, c io.ReadWriter) []byte {
 		return Encode(0, false)
 	}
 	expDurationMs := time.Now().UnixMilli() + expDurationSecs*1000
-	obj.ExpireAt = expDurationMs
+	setExpiry(obj, expDurationMs)
 	return Encode(1, false)
 }
 

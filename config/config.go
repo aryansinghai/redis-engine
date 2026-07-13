@@ -22,7 +22,7 @@ func ForceInit(cfg *ServerConfig) {
 	if Config.AOF_FILE == "" {
 		Config.AOF_FILE = "./mastr.aof"
 	}
-	Config.EVICTION_POLICY = "allkeys-random"
+	Config.EVICTION_POLICY = "allkeys-lru"
 	// for testing purposes
 	Config.EVICTION_RATIO = 0.4
 }
