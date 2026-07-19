@@ -2,7 +2,6 @@ package core
 
 import (
 	"log"
-	"time"
 )
 
 func CleanupExpiredKeys() {
@@ -17,21 +16,23 @@ func CleanupExpiredKeys() {
 }
 
 func expireSample() float32 {
-	var limit int = 20
-	var count int = 0
+	const sampleSize = 20
+	checked := 0
+	expired := 0
 
 	for key, obj := range store {
-		if !isExpired(obj) {
-			limit--
-			if expiresAt[obj] < uint64(time.Now().UnixMilli()) {
-				delete(store, key)
-				count++
-			}
-		}
-		if limit <= 0 {
+		if checked >= sampleSize {
 			break
+		}
+		checked++
+		if isExpired(obj) {
+			Delete(key) // #genai: only remove keys that actually expired
+			expired++
 		}
 	}
 
-	return float32(count) / float32(20.0)
+	if checked == 0 {
+		return 0
+	}
+	return float32(expired) / float32(checked)
 }

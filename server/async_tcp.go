@@ -3,6 +3,9 @@ package server
 import (
 	"log"
 	"net"
+	"os"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -14,7 +17,31 @@ var con_clients int = 0
 var cronFrequency time.Duration = 1 * time.Second
 var cronLastRun time.Time = time.Now()
 
-func RunAsyncTCPServer() error {
+var connectedClients map[int]*core.Client = make(map[int]*core.Client)
+
+const EngineStatus_WAITING int32 = 1 << 1
+const EngineStatus_BUSY int32 = 1 << 2
+const EngineStatus_SHUTING_DOWN int32 = 1 << 3
+
+var eStatus int32 = EngineStatus_WAITING
+
+func WaitForSignals(wg *sync.WaitGroup, sigs chan os.Signal) {
+	defer wg.Done()
+	<-sigs
+
+	for atomic.LoadInt32(&eStatus) == EngineStatus_BUSY {
+	}
+
+	atomic.StoreInt32(&eStatus, EngineStatus_SHUTING_DOWN)
+	core.Shutdown()
+	os.Exit(0)
+}
+
+func RunAsyncTCPServer(wg *sync.WaitGroup) error {
+	defer wg.Done()
+	defer func() {
+		atomic.StoreInt32(&eStatus, EngineStatus_SHUTING_DOWN)
+	}()
 	log.Printf("Starting an async TCP server on %s:%d", config.Config.Host, config.Config.Port)
 
 	maxClients := 20000
@@ -67,7 +94,7 @@ func RunAsyncTCPServer() error {
 		return err
 	}
 
-	for {
+	for atomic.LoadInt32(&eStatus) != EngineStatus_SHUTING_DOWN {
 		if time.Now().Sub(cronLastRun) >= cronFrequency {
 			cronLastRun = time.Now()
 			core.CleanupExpiredKeys()
@@ -83,6 +110,23 @@ func RunAsyncTCPServer() error {
 			continue
 		}
 
+		// Critical section
+		//Here we need to ensure that the engine is not shutting down and that we are not already busy
+		//If the engine is shutting down, we need to return immediately
+		//If we are already busy, we need to wait for the engine to be available
+		//If we are not busy, we can proceed to the next step
+		//This is a critical section because we need to ensure that the engine is not shutting down and that we are not already busy
+
+		// mark the engine as busy only when it is in the waiting state
+		if !atomic.CompareAndSwapInt32(&eStatus, EngineStatus_WAITING, EngineStatus_BUSY) {
+			// if th engine is shutting down, we need to return immediately
+			// if swap failed because the engine is not in the waiting state, we need to wait for the engine to be available
+			switch eStatus {
+			case EngineStatus_SHUTING_DOWN:
+				return nil
+			}
+		}
+
 		for i := 0; i < nevents; i++ {
 			kev := &events[i]
 			if int(kev.Ident) == serverFD {
@@ -93,6 +137,7 @@ func RunAsyncTCPServer() error {
 				}
 				con_clients++
 				log.Printf("Client connected: %d", con_clients)
+				connectedClients[fd] = core.NewClient(fd)
 				syscall.SetNonblock(fd, true)
 
 				var event syscall.Kevent_t = syscall.Kevent_t{
@@ -111,16 +156,23 @@ func RunAsyncTCPServer() error {
 					continue
 				}
 			} else {
-				comm := core.FDComm{Fd: int(kev.Ident)}
+				comm := connectedClients[int(events[i].Ident)]
+				if comm == nil {
+					log.Printf("Client not found: %d", int(events[i].Ident))
+					continue
+				}
 				cmds, err := readCommands(comm)
 				if err != nil {
 					syscall.Close(int(kev.Ident))
 					con_clients--
 					log.Printf("Client disconnected: %d", con_clients)
+					delete(connectedClients, int(events[i].Ident))
 					continue
 				}
 				respond(comm, cmds)
 			}
 		}
+		atomic.StoreInt32(&eStatus, EngineStatus_WAITING)
 	}
+	return nil
 }

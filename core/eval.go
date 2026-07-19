@@ -9,46 +9,101 @@ import (
 	"time"
 )
 
+var RESP_QUEUED = []byte("+QUEUED\r\n")
 var RESP_NIL = []byte("$-1\r\n")
 var RESP_NIL2 = []byte(":-2\r\n")
 var RESP_NIL_INTEGER = []byte(":-1\r\n")
 var RESP_OK = []byte("+OK\r\n") // #genai: RESP simple strings must start with +
 
-func EvalAndRespond(cmds RedisCmds, c io.ReadWriter) error {
+var txnCommands map[string]bool = map[string]bool{
+	"EXEC":    true,
+	"DISCARD": true,
+}
+
+func evalMulti(args []string, c *Client) []byte {
+	return RESP_OK
+}
+
+func executeCommand(cmd *RedisCmd, c *Client) []byte {
+	switch cmd.Cmd {
+	case "PING":
+		return evalPing(cmd.Args, c)
+	case "GET":
+		return evalGet(cmd.Args, c)
+	case "SET":
+		return evalSet(cmd.Args, c)
+	case "TTL":
+		return evalTTL(cmd.Args, c)
+	case "DEL":
+		return evalDel(cmd.Args, c)
+	case "EXPIRE":
+		return evalExpire(cmd.Args, c)
+	case "BGREWRITEAOF":
+		return evalBgRewriteAOF(cmd.Args)
+	case "INCR":
+		return evalIncr(cmd.Args, c)
+	case "INFO":
+		return evalInfo(cmd.Args)
+	case "SLEEP":
+		return evalSleep(cmd.Args, c)
+	case "MULTI":
+		c.TxnBegin(cmd)
+		return evalMulti(cmd.Args, c)
+	case "EXEC":
+		if !c.isTxn {
+			return Encode(errors.New("EXEC without MULTI"), false)
+		}
+		return c.TxnExec()
+	case "DISCARD":
+		if !c.isTxn {
+			return Encode(errors.New("DISCARD without MULTI"), false)
+		}
+		return c.TxnDiscard()
+	default:
+		return evalPing(cmd.Args, c)
+	}
+}
+
+func execCommandToBuffer(cmd *RedisCmd, c *Client, buf *bytes.Buffer) {
+	buf.Write(executeCommand(cmd, c))
+}
+
+func EvalAndRespond(cmds RedisCmds, c *Client) {
 
 	var response []byte
 	buf := bytes.NewBuffer(response)
 
 	for _, cmd := range cmds {
-		switch cmd.Cmd {
-		case "PING":
-			buf.Write(evalPing(cmd.Args, c))
-		case "GET":
-			buf.Write(evalGet(cmd.Args, c))
-		case "SET":
-			buf.Write(evalSet(cmd.Args, c))
-		case "TTL":
-			buf.Write(evalTTL(cmd.Args, c))
-		case "DEL":
-			buf.Write(evalDel(cmd.Args, c))
-		case "EXPIRE":
-			buf.Write(evalExpire(cmd.Args, c))
-		case "BGREWRITEAOF":
-			buf.Write(evalBgRewriteAOF(cmd.Args))
-		case "INCR":
-			buf.Write(evalIncr(cmd.Args, c))
-		case "INFO":
-			buf.Write(evalInfo(cmd.Args))
-		default:
-			buf.Write(evalPing(cmd.Args, c))
+		// if txn is active, add command to queue
+		// if txn is not active, execute command and add to buffer
+		if !c.isTxn {
+			execCommandToBuffer(cmd, c, buf)
+			continue
+		}
+		if !txnCommands[cmd.Cmd] {
+			c.TxnQueue(cmd)
+			buf.Write(RESP_QUEUED)
+		} else {
+			execCommandToBuffer(cmd, c, buf)
 		}
 	}
 	c.Write(buf.Bytes())
-	return nil
 }
 
 func evalBgRewriteAOF(args []string) []byte {
 	DumpAllAOF()
+	return RESP_OK
+}
+
+func evalSleep(args []string, c io.ReadWriter) []byte {
+	if len(args) != 1 {
+		return Encode(errors.New("wrong number of arguments for 'sleep' command"), false)
+	}
+	sleepDuration, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return Encode(errors.New("invalid sleep duration for 'sleep' command"), false)
+	}
+	time.Sleep(time.Duration(sleepDuration) * time.Second)
 	return RESP_OK
 }
 

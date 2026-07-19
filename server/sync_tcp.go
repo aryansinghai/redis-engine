@@ -70,10 +70,7 @@ func respondError(conn io.ReadWriter, err error) {
 }
 
 func respond(c io.ReadWriter, cmds core.RedisCmds) {
-	err := core.EvalAndRespond(cmds, c)
-	if err != nil {
-		respondError(c, err)
-	}
+	core.EvalAndRespond(cmds, c.(*core.Client))
 }
 
 func RunSyncTCPServer(host string, port int) {

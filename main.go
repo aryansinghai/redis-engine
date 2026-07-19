@@ -2,7 +2,10 @@ package main
 
 import (
 	"flag"
-	"log"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 
 	"server/config"
 	"server/server"
@@ -17,8 +20,14 @@ func setUpFlags() {
 
 func main() {
 	setUpFlags()
-	log.Printf("Starting server on %s:%d", config.Config.Host, config.Config.Port)
-	if err := server.RunAsyncTCPServer(); err != nil { // #genai
-		log.Fatalf("Server failed: %v", err)
-	}
+
+	var sigs = make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go server.RunAsyncTCPServer(&wg)
+	go server.WaitForSignals(&wg, sigs)
+
+	wg.Wait()
 }
